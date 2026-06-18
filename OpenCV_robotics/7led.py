@@ -2,82 +2,74 @@ import cv2
 import mediapipe as mp
 import math
 
-# MediaPipe setup
-mp_hands = mp.solutions.hands
-hands = mp_hands.Hands()
-
-# Webcam
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
-# LED state (False = OFF, True = ON)
-led_on = False
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.8, min_tracking_confidence=0.8)
 
-# To avoid multiple toggles while fingers stay pinched
-pinch_detected = False
+led_on = False         
+pinch_cooldown = False  #to stop toggling continuosly
+cooldown_frames = 0     
 
-while True:
-    ret, frame = cap.read()
+print("Pinch your Thumb and Index Finger tips tightly together to toggle state to ON or OFF.")
+print("Press 'q' to exit.")
 
-    if not ret:
+while cap.isOpened():
+    success, frame = cap.read()
+    if not success:
         break
 
-    # Flip for mirror view
     frame = cv2.flip(frame, 1)
+    h, w, _ = frame.shape
 
-    # Convert BGR to RGB
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    rgbframe = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = hands.process(rgbframe)
 
-    # Detect hand
-    result = hands.process(rgb)
+    #to cause half second delyas in toggling so as to provide smooth toggling
+    if pinch_cooldown:
+        cooldown_frames += 1
+        if cooldown_frames > 15: 
+            pinch_cooldown= False
+            cooldown_frames= 0
 
     if result.multi_hand_landmarks:
+        for hand_lms in result.multi_hand_landmarks:
+            # Index 4 is Thumb Tip | Index 8 is Index Finger Tip
+            thumb= hand_lms.landmark[4]
+            index= hand_lms.landmark[8]
 
-        for hand in result.multi_hand_landmarks:
+            tx,ty= int(thumb.x * w), int(thumb.y * h)
+            ix,iy= int(index.x * w), int(index.y * h)
 
-            # Thumb tip (Landmark 4)
-            thumb = hand.landmark[4]
+            cv2.circle(frame, (tx, ty), 8, (255, 255, 0), cv2.FILLED) 
+            cv2.circle(frame, (ix, iy), 8, (255, 255, 0), cv2.FILLED)
 
-            # Index finger tip (Landmark 8)
-            index = hand.landmark[8]
+            distance= math.sqrt((tx - ix)**2 +(ty - iy)**2)
 
-            h, w, _ = frame.shape
-
-            # Convert to pixel coordinates
-            x1 = int(thumb.x * w)
-            y1 = int(thumb.y * h)
-
-            x2 = int(index.x * w)
-            y2 = int(index.y * h)
-
-            # Draw points
-            cv2.circle(frame, (x1, y1), 10, (255, 0, 0), -1)
-            cv2.circle(frame, (x2, y2), 10, (0, 255, 0), -1)
-
-            # Distance formula
-            distance = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-
-            # Pinch threshold
+            # A distance below 40 pixels is condition for toggling
             if distance < 40:
+                if not pinch_cooldown:
+                    led_on = not led_on 
+                    pinch_cooldown = True 
 
-                # Toggle only once per pinch
-                if not pinch_detected:
-                    led_on = not led_on
-                    pinch_detected = True
-
-            else:
-                pinch_detected = False
-
-    # Draw LED
+    
     if led_on:
-        color = (0, 255, 0)      # Green = ON
+        led = (0, 255, 0) 
+        text = "SYSTEM STATUS: ON"
     else:
-        color = (0, 0, 255)      # Red = OFF
+        led = (0, 0, 255) 
+        text = "SYSTEM STATUS: OFF"
 
-    cv2.circle(frame, (100, 100), 40, color, -1)
+    cv2.circle(frame, (100, 100), 30, led, cv2.FILLED)
+    cv2.circle(frame, (100, 100), 32, (255, 255, 255), 2, cv2.LINE_AA)
 
-    cv2.imshow("LED Control", frame)
+    cv2.putText(frame, text,(160, 110),cv2.FONT_HERSHEY_SIMPLEX,1,led,2,cv2.LINE_AA)
+    
+    cv2.imshow("Interface", frame)
 
-    if cv2.waitKey(1) & 0xFF == 27:
+    if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
 cap.release()
